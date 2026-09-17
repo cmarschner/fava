@@ -8,6 +8,14 @@
   let value = $state("");
   let autocomplete = $state.raw<{ blur: () => void }>();
 
+  // $accounts is ranked by recency/frequency of use (see
+  // core/attributes.py's ExponentialDecayRanker) - a good default for
+  // autocompleting an account while entering a transaction (entry-forms/
+  // AccountInput.svelte uses it as-is for that), but confusing for
+  // jumping straight to a specific account by name, where alphabetical is
+  // what a user scanning the list expects.
+  let sorted_accounts = $derived([...$accounts].sort());
+
   function select() {
     if (value) {
       router.navigate($url_for_account(value));
@@ -22,7 +30,7 @@
     bind:value
     bind:this={autocomplete}
     placeholder={_("Go to account")}
-    suggestions={$accounts}
+    suggestions={sorted_accounts}
     key="g a"
     onselect={select}
     onenter={select}
