@@ -1,0 +1,6 @@
+# Only frontend/node_modules is excluded: it's ~140MB of npm packages that
+# the Docker build never needs (hatch_build.py's frontend-compile step is
+# skipped by touching src/fava/static/app.js before install, since the
+# prebuilt assets are already committed to this repo). .git is kept so
+# hatch-vcs can still determine a real version number from it.
+frontend/node_modules
