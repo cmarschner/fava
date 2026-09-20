@@ -156,8 +156,17 @@
   /* AutocompleteInput's own wrapper span is display:inline-block
      (shrink-to-fit by default) - override it too, otherwise the 100%
      above only reaches as far as that still-shrunk span and the input
-     inside it stays at the browser's default width regardless. */
-  span :global(span) {
+     inside it stays at the browser's default width regardless.
+
+     Direct-child combinator only (not a bare descendant selector): a
+     descendant selector here also matched the highlight <span>s nested
+     INSIDE the suggestion dropdown's own <li>s (see AutocompleteInput's
+     fuzzywrap usage) - forcing each matched-text fragment to block/100%
+     width broke the dropdown's layout, making every entry wrap instead
+     of laying out as a normal line of text. AutocompleteInput's own
+     wrapper span is the only span actually meant to be targeted here,
+     and it's a direct child of the span below. */
+  span > :global(span) {
     display: block;
     width: 100%;
     box-sizing: border-box;
