@@ -18,6 +18,7 @@ import { mount, unmount } from "svelte";
 import { get } from "svelte/store";
 
 import {
+  get_changed,
   get_source_slice,
   put_add_category_rule,
   put_source_slice,
@@ -45,12 +46,20 @@ interface PendingEdit {
   new_account: string;
   li: HTMLLIElement;
   payee: string;
+  posting_index: 0 | 1;
 }
 
-/** entry_hash -> the latest not-yet-flushed edit for that entry. A second
- * edit to the same row before a flush simply overwrites the first - only
- * the final value matters. */
+/** `${entry_hash}:${posting_index}` -> the latest not-yet-flushed edit for
+ * that posting. A second edit to the same posting before a flush simply
+ * overwrites the first - only the final value matters. Keyed by posting
+ * index (not just entry_hash) since both postings of one transaction can
+ * now be edited independently - two genuinely different pending writes to
+ * the same entry, not one overwriting the other. */
 const pending = new Map<string, PendingEdit>();
+
+function pending_key(entry_hash: string, posting_index: 0 | 1): string {
+  return `${entry_hash}:${String(posting_index)}`;
+}
 
 let flush_timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -70,14 +79,39 @@ function entry_hash_of(li: HTMLLIElement): string | null {
   return href?.startsWith("#context-") ? href.slice(9) : null;
 }
 
+export interface EditablePosting {
+  /** The posting <span class="description"> holding this posting's
+   * account link - what gets replaced by the mounted editor. */
+  cell: HTMLElement;
+  account: string;
+  /** DOM posting order (0 or 1) - a stable identity for this slot across
+   * repeated edits, independent of its current account text. Used as part
+   * of the pending-map key (see `pending_key`) and to look up "the same
+   * role" posting on an adjacent row (see `fill_down`). */
+  index: 0 | 1;
+}
+
 export interface EditableRow {
   li: HTMLLIElement;
   entry_hash: string;
-  /** The posting <span class="description"> holding the counter account's
-   * link - what gets replaced by the mounted editor. */
-  counter_cell: HTMLElement;
-  counter_account: string;
   payee: string;
+  /** Both postings, in DOM order - either is editable now (see the
+   * module doc comment on why this account-browsing view needs BOTH,
+   * not just the counter side the original bank-account-browsing design
+   * assumed). */
+  postings: [EditablePosting, EditablePosting];
+  /** Index into `postings` of the leg matching `this_account`. The other
+   * index is conventionally "the counter account" - kept as the DEFAULT
+   * slot opened by row-level navigation (Enter/ArrowUp/ArrowDown), since
+   * that's still the common case (browsing a bank account, categorizing
+   * the counter side) and shouldn't get slower for it. Clicking directly
+   * on a posting, or arrowing past the end/start of the open cell's
+   * text, reaches the other one. */
+  this_idx: 0 | 1;
+}
+
+function counter_idx_of(row: EditableRow): 0 | 1 {
+  return row.this_idx === 0 ? 1 : 0;
 }
 
 /**
@@ -117,10 +151,9 @@ export function find_editable_row(
   const is_this = (a: string) =>
     a === this_account || a.startsWith(`${this_account}:`);
   const this_idx = accounts.findIndex((a) => a != null && is_this(a));
-  if (this_idx === -1) {
+  if (this_idx !== 0 && this_idx !== 1) {
     return null;
   }
-  const counter_idx = this_idx === 0 ? 1 : 0;
   const entry_hash = entry_hash_of(li);
   if (entry_hash == null) {
     return null;
@@ -131,9 +164,12 @@ export function find_editable_row(
   return {
     li,
     entry_hash,
-    counter_cell: cells[counter_idx]!,
-    counter_account: accounts[counter_idx]!,
     payee,
+    postings: [
+      { cell: cells[0]!, account: accounts[0]!, index: 0 },
+      { cell: cells[1]!, account: accounts[1]!, index: 1 },
+    ],
+    this_idx,
   };
 }
 
@@ -166,26 +202,72 @@ function replace_posting_account(
   return slice.replace(re, `$1${new_account}`);
 }
 
-async function flush_one(entry_hash: string, edit: PendingEdit): Promise<void> {
-  const { slice, sha256sum } = await get_source_slice({ entry_hash });
-  const new_slice = replace_posting_account(
-    slice,
-    edit.old_account,
-    edit.new_account,
-  );
-  if (new_slice == null) {
-    throw new Error(
-      `Could not find posting line for ${edit.old_account} - it may have already changed (e.g. edited elsewhere in the meantime).`,
+/** Flush every pending edit belonging to one entry, sequentially - two
+ * edits to the SAME entry_hash (its two postings, each independently
+ * edited) can't safely go through put_source_slice concurrently: both
+ * would read the same starting sha256sum, and whichever write lands
+ * second would be rejected as a stale-concurrency conflict against a
+ * sha256sum the first write already moved past. Chaining slice/sha256sum
+ * through each edit in turn avoids that. Returns the keys that failed
+ * (kept in `pending` by the caller so nothing is silently lost). */
+async function flush_entry(
+  entry_hash: string,
+  edits: [string, PendingEdit][],
+): Promise<string[]> {
+  let { slice, sha256sum } = await get_source_slice({ entry_hash });
+  const failed: string[] = [];
+  for (const [key, edit] of edits) {
+    const new_slice = replace_posting_account(
+      slice,
+      edit.old_account,
+      edit.new_account,
     );
+    if (new_slice == null) {
+      notify_err(
+        new Error(
+          `Could not find posting line for ${edit.old_account} - it may have already changed (e.g. edited elsewhere in the meantime).`,
+        ),
+        (err) => `Saving category for '${edit.payee}' failed: ${err.message}`,
+      );
+      failed.push(key);
+      continue;
+    }
+    try {
+      sha256sum = await put_source_slice({
+        entry_hash,
+        source: new_slice,
+        sha256sum,
+      });
+    } catch (error: unknown) {
+      notify_err(
+        error,
+        (err) => `Saving category for '${edit.payee}' failed: ${err.message}`,
+      );
+      failed.push(key);
+      continue;
+    }
+    slice = new_slice;
+    offer_rule_learning(edit.payee, edit.new_account);
   }
-  await put_source_slice({ entry_hash, source: new_slice, sha256sum });
-  offer_rule_learning(edit.payee, edit.new_account);
+  return failed;
 }
 
-/** Flush every pending edit now, concurrently (each targets a different
- * entry_hash with its own independent optimistic-concurrency check, so
- * there's no ordering dependency between them). Safe to call with nothing
- * pending. */
+/** Flush every pending edit now. Edits are grouped by entry_hash and each
+ * group's writes are sequential (see flush_entry); different entries have
+ * independent optimistic-concurrency checks and so still flush
+ * concurrently with each other. Safe to call with nothing pending.
+ *
+ * A successful put_source_slice already notifies Fava's own watcher (see
+ * FileModule.save_entry_slice), but that only marks the file as changed -
+ * the server only actually re-parses on the *next* check, which for a
+ * pure-API session (no full page navigation in between) is whatever the
+ * 5s poll_for_changes timer happens to line up with. On a bind-mounted
+ * ledger the inotify-based watcher thread backing that poll can also be
+ * unreliable to begin with (a known Docker-Desktop bind-mount limitation,
+ * not something fixable from here). Explicitly calling get_changed()
+ * right after a successful write forces that reload immediately instead
+ * of depending on either of those, so a save is guaranteed to be
+ * reflected (in errors, other pages, other tabs) right away. */
 export async function flush_all(): Promise<void> {
   if (pending.size === 0) {
     return;
@@ -194,25 +276,38 @@ export async function flush_all(): Promise<void> {
     clearTimeout(flush_timer);
     flush_timer = undefined;
   }
-  const entries = [...pending.entries()];
+  const by_entry = new Map<string, [string, PendingEdit][]>();
+  for (const [key, edit] of pending) {
+    const entry_hash = key.split(":")[0]!;
+    const group = by_entry.get(entry_hash);
+    if (group) {
+      group.push([key, edit]);
+    } else {
+      by_entry.set(entry_hash, [[key, edit]]);
+    }
+  }
+  const succeeded_keys = new Set(pending.keys());
   pending.clear();
   category_edit_state.pending = 0;
   await Promise.all(
-    entries.map(async ([entry_hash, edit]) => {
-      try {
-        await flush_one(entry_hash, edit);
-      } catch (error: unknown) {
-        notify_err(
-          error,
-          (err) => `Saving category for '${edit.payee}' failed: ${err.message}`,
-        );
-        // Put it back so it isn't silently lost - the debounce/explicit
-        // flush/navigate-away paths will retry it.
-        pending.set(entry_hash, edit);
-        category_edit_state.pending = pending.size;
+    [...by_entry].map(async ([entry_hash, edits]) => {
+      const failed = await flush_entry(entry_hash, edits);
+      for (const key of failed) {
+        succeeded_keys.delete(key);
       }
     }),
   );
+  // Put failed edits back so they aren't silently lost - the debounce/
+  // explicit flush/navigate-away paths will retry them.
+  for (const [key, edit] of [...by_entry.values()].flat()) {
+    if (!succeeded_keys.has(key)) {
+      pending.set(key, edit);
+    }
+  }
+  category_edit_state.pending = pending.size;
+  if (succeeded_keys.size > 0) {
+    get_changed().catch(log_error);
+  }
 }
 
 function schedule_flush(): void {
@@ -225,21 +320,30 @@ function schedule_flush(): void {
 }
 
 /** Update a row's displayed text and queue its persistence - the ONLY
- * thing on the synchronous commit path (see module doc comment). */
-export function commit_edit(row: EditableRow, new_account: string): void {
-  if (new_account === row.counter_account) {
+ * thing on the synchronous commit path (see module doc comment). `slot`
+ * is which of the row's two postings this edit targets - either can be
+ * edited (see EditableRow), independently of the other. */
+export function commit_edit(
+  row: EditableRow,
+  slot: 0 | 1,
+  new_account: string,
+): void {
+  const posting = row.postings[slot];
+  if (new_account === posting.account) {
     return;
   }
-  const existing = pending.get(row.entry_hash);
-  pending.set(row.entry_hash, {
-    old_account: existing?.old_account ?? row.counter_account,
+  const key = pending_key(row.entry_hash, slot);
+  const existing = pending.get(key);
+  pending.set(key, {
+    old_account: existing?.old_account ?? posting.account,
     new_account,
     li: row.li,
     payee: row.payee,
+    posting_index: slot,
   });
   category_edit_state.pending = pending.size;
-  render_cell_text(row.counter_cell, new_account);
-  row.counter_account = new_account;
+  render_cell_text(posting.cell, new_account);
+  posting.account = new_account;
   schedule_flush();
 }
 
@@ -250,6 +354,7 @@ export function commit_edit(row: EditableRow, new_account: string): void {
  * a once-edited row unrecognizable to fill-down, re-opening its editor,
  * and so on. */
 function render_cell_text(cell: HTMLElement, account: string): void {
+  cell.classList.remove("category-editing");
   cell.textContent = "";
   const a = document.createElement("a");
   a.textContent = account;
@@ -260,7 +365,7 @@ function render_cell_text(cell: HTMLElement, account: string): void {
 const already_offered = new Set<string>();
 
 function offer_rule_learning(payee: string, account: string): void {
-  const key = `${payee} ${account}`;
+  const key = `${payee} ${account}`;
   if (!payee || already_offered.has(key)) {
     return;
   }
@@ -281,7 +386,11 @@ function offer_rule_learning(payee: string, account: string): void {
   );
 }
 
-let active_editor: { row: EditableRow; unmount: () => void } | null = null;
+let active_editor: {
+  row: EditableRow;
+  slot: 0 | 1;
+  unmount: () => void;
+} | null = null;
 
 /** Bumped by the first move_to call that actually acts on a given editor -
  * see the comment on `my_generation` in open_editor for why this exists. */
@@ -304,10 +413,25 @@ function close_active_editor(): void {
   }
   active_editor = null;
   editor.unmount();
-  render_cell_text(editor.row.counter_cell, editor.row.counter_account);
+  render_cell_text(
+    editor.row.postings[editor.slot].cell,
+    editor.row.postings[editor.slot].account,
+  );
 }
 
-function open_editor(ol: HTMLOListElement, this_account: string): void {
+/**
+ * Open an editor on the selected row. `slot` picks which of the row's two
+ * postings to edit - defaults to the counter account (index other than
+ * `this_idx`), preserving the original, still-most-common workflow
+ * (browsing a bank account, categorizing the counter side) as the default
+ * for plain row-level navigation (Enter/ArrowUp/ArrowDown). Pass an
+ * explicit slot for click-to-edit or cell-to-cell ArrowRight/ArrowLeft.
+ */
+function open_editor(
+  ol: HTMLOListElement,
+  this_account: string,
+  slot?: 0 | 1,
+): void {
   close_active_editor();
   const li = selected_row(ol);
   if (li == null) {
@@ -317,9 +441,18 @@ function open_editor(ol: HTMLOListElement, this_account: string): void {
   if (row == null) {
     return;
   }
+  const target_slot = slot ?? counter_idx_of(row);
+  const posting = row.postings[target_slot];
   const container = document.createElement("span");
-  row.counter_cell.textContent = "";
-  row.counter_cell.append(container);
+  // Plain, un-styled mount target for CategoryEditCell - its own scoped
+  // CSS sizes ITS OWN root element to 100% width, but that's only
+  // meaningful if THIS wrapping container (created here, outside any
+  // component) is block-level and full-width too, not shrink-to-fit.
+  container.style.display = "block";
+  container.style.width = "100%";
+  posting.cell.textContent = "";
+  posting.cell.classList.add("category-editing");
+  posting.cell.append(container);
   // Ties this editor's move_to to the generation current when IT opened:
   // is_current() alone only guards a STALE editor's callbacks (one that's
   // no longer active_editor), but AutocompleteInput can call oncommit
@@ -330,45 +463,90 @@ function open_editor(ol: HTMLOListElement, this_account: string): void {
   // second, duplicate call to THIS editor's own oncommit/onarrowdown a
   // no-op too, regardless of why it fired twice.
   const my_generation = move_generation;
-  const move_to = (direction: 1 | -1) => {
+  // Deferred a tick (mounting and focusing the next cell's input in the
+  // same synchronous stack as the previous one's teardown is flaky in
+  // Chrome - the fresh input can pick up a spurious blur right after
+  // gaining focus, which AutocompleteInput turns into its own
+  // onchange/commit and would otherwise cascade into skipping an extra
+  // row/cell), and generation-guarded the same way.
+  const reopen = (move: () => void, next_slot: 0 | 1 | undefined) => {
     if (move_generation !== my_generation) {
       return;
     }
     move_generation++;
     close_active_editor();
-    move_selection(ol, direction);
-    // Deferred a tick (matching the ArrowDown path below): mounting and
-    // focusing the next row's input in the same synchronous stack as the
-    // previous one's teardown is flaky in Chrome - the fresh input can
-    // pick up a spurious blur right after gaining focus, which
-    // AutocompleteInput turns into its own onchange/commit and would
-    // otherwise cascade into skipping an extra row.
+    move();
     queueMicrotask(() => {
-      open_editor(ol, this_account);
+      open_editor(ol, this_account, next_slot);
     });
   };
-  const is_current = () => active_editor?.row === row;
+  const move_to_row = (direction: 1 | -1, next_slot?: 0 | 1) => {
+    reopen(() => {
+      move_selection(ol, direction);
+    }, next_slot);
+  };
+  const move_to_same_row_other_slot = () => {
+    reopen(() => {
+      /* selection (the row) doesn't change - only the slot does. */
+    }, target_slot === 0 ? 1 : 0);
+  };
+  const is_current = () =>
+    active_editor?.row === row && active_editor.slot === target_slot;
   const instance = mount(CategoryEditCell, {
     target: container,
     props: {
-      initial_value: row.counter_account,
+      initial_value: posting.account,
       oncommit: (value: string) => {
         if (!is_current()) {
           return;
         }
-        commit_edit(row, value);
-        move_to(1);
+        commit_edit(row, target_slot, value);
+        move_to_row(1);
       },
       onarrowdown: (value: string) => {
         if (!is_current()) {
           return;
         }
-        commit_edit(row, value);
-        move_to(1);
+        commit_edit(row, target_slot, value);
+        move_to_row(1);
+      },
+      onarrowup: (value: string) => {
+        if (!is_current()) {
+          return;
+        }
+        commit_edit(row, target_slot, value);
+        move_to_row(-1);
+      },
+      onarrowright: (value: string) => {
+        if (!is_current()) {
+          return;
+        }
+        commit_edit(row, target_slot, value);
+        if (target_slot === 0) {
+          move_to_same_row_other_slot();
+        } else {
+          // Already on the row's last cell - flow into the next row's
+          // first cell, matching left-to-right/top-to-bottom reading
+          // order.
+          move_to_row(1, 0);
+        }
+      },
+      onarrowleft: (value: string) => {
+        if (!is_current()) {
+          return;
+        }
+        commit_edit(row, target_slot, value);
+        if (target_slot === 1) {
+          move_to_same_row_other_slot();
+        } else {
+          // Already on the row's first cell - flow backward into the
+          // previous row's LAST cell (symmetric with ArrowRight above).
+          move_to_row(-1, 1);
+        }
       },
     },
   });
-  active_editor = { row, unmount: () => unmount(instance) };
+  active_editor = { row, slot: target_slot, unmount: () => unmount(instance) };
 }
 
 function move_selection(ol: HTMLOListElement, direction: 1 | -1): void {
@@ -392,14 +570,23 @@ function move_selection(ol: HTMLOListElement, direction: 1 | -1): void {
   next.scrollIntoView({ block: "nearest" });
 }
 
-/** Ctrl/Cmd+D: repeat the counter-account from the row immediately above
- * the current selection into the current row - the primary rapid-
- * correction tool for a run of sorted, similar transactions. Works whether
- * or not a cell is currently open on the target row (in the normal flow,
- * one always is - each row-advancing action reopens the next row's editor
- * immediately, so gating this on "no cell open" would make it effectively
- * unreachable). Also advances to the next row afterward, same as a commit,
- * so repeated Ctrl+D fills a whole run of rows without any other keys. */
+/** Ctrl/Cmd+D: repeat the row-above's value, into the SAME role (this-
+ * account-side or counter-side, whichever is currently being edited - see
+ * EditableRow) in the current row - the primary rapid-correction tool for
+ * a run of sorted, similar transactions. Works whether or not a cell is
+ * currently open on the target row (in the normal flow, one always is -
+ * each row-advancing action reopens the next row's editor immediately, so
+ * gating this on "no cell open" would make it effectively unreachable).
+ *
+ * Role-aware (not simply "copy row-above's posting at the same DOM
+ * index") because the two postings' order isn't guaranteed consistent
+ * between rows, and because which side is meaningful to fill down depends
+ * entirely on which account's journal this is: browsing a bank account,
+ * it's almost always the counter (category) side; browsing an expense
+ * category's own journal to fix miscategorized entries, it's the
+ * this-account side instead. Also advances to the next row afterward,
+ * continuing the SAME role there, so repeated Ctrl+D fills a whole run of
+ * rows in one column without ever needing another key. */
 function fill_down(ol: HTMLOListElement, this_account: string): void {
   const rows = visible_rows(ol);
   const current_index = rows.findIndex((li) =>
@@ -408,25 +595,57 @@ function fill_down(ol: HTMLOListElement, this_account: string): void {
   if (current_index <= 0) {
     return;
   }
-  const above = find_editable_row(rows[current_index - 1]!, this_account);
   const current_li = rows[current_index]!;
+  // Which slot/role to fill, and whether the current row's own editor is
+  // open on current_li, need deciding BEFORE any find_editable_row call
+  // on current_li: while that row's editor is open, the edited posting's
+  // cell holds the mounted input, not an <a>, so find_editable_row (via
+  // account_from_link) can't parse it and returns null for the whole row
+  // - not just that one posting. active_editor already has everything
+  // needed (this_idx, li) from when it was opened, so use that instead
+  // of re-deriving it from DOM that's mid-edit.
+  const editor_here = active_editor?.row.li === current_li ? active_editor : null;
+  const this_idx_of_current =
+    editor_here?.row.this_idx ??
+    find_editable_row(current_li, this_account)?.this_idx;
+  if (this_idx_of_current == null) {
+    return;
+  }
+  const target_slot =
+    editor_here?.slot ?? (this_idx_of_current === 0 ? 1 : 0);
+  const editing_this_side = target_slot === this_idx_of_current;
+  const above = find_editable_row(rows[current_index - 1]!, this_account);
   if (above == null) {
     return;
   }
+  const above_slot = editing_this_side
+    ? above.this_idx
+    : counter_idx_of(above);
   // If the current row's editor is open, it owns current_li's cell's DOM
   // right now - close it first so commit_edit's render doesn't yank the
-  // DOM out from under the still-mounted Svelte component.
-  if (active_editor?.row.li === current_li) {
+  // DOM out from under the still-mounted Svelte component, AND so the
+  // find_editable_row call right below can parse that cell's link again.
+  if (editor_here != null) {
     close_active_editor();
   }
   const current = find_editable_row(current_li, this_account);
   if (current == null) {
     return;
   }
-  commit_edit(current, above.counter_account);
+  commit_edit(current, target_slot, above.postings[above_slot].account);
   move_selection(ol, 1);
   queueMicrotask(() => {
-    open_editor(ol, this_account);
+    // Continue the same role on the row now selected, so a run of Ctrl+D
+    // presses fills one consistent column rather than snapping back to
+    // the row-level default (counter) each time.
+    const next_li = selected_row(ol);
+    const next = next_li ? find_editable_row(next_li, this_account) : null;
+    const next_slot = next
+      ? editing_this_side
+        ? next.this_idx
+        : counter_idx_of(next)
+      : undefined;
+    open_editor(ol, this_account, next_slot);
   });
 }
 
@@ -467,7 +686,7 @@ export function init_category_edit_mode(
     if (active_editor != null) {
       return;
     }
-    if (event.key === "ArrowDown") {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       // Let the base keyboard_navigation.ts move the selection first,
       // then (re)open the editor on the newly selected row.
       queueMicrotask(() => {
@@ -481,6 +700,65 @@ export function init_category_edit_mode(
     }
   }
   document.addEventListener("keydown", keydown);
+
+  /** Click directly on either posting's account link opens an editor
+   * there (selecting its row first if needed), instead of navigating to
+   * that account - the click-to-edit counterpart of arrowing/tabbing
+   * into a specific cell. Only intercepts within edit mode, and only for
+   * a posting's own account link inside a two-posting editable row;
+   * everything else (the date link, a non-editable row, edit mode being
+   * off) falls through to Fava's normal click handling untouched. */
+  function click(event: MouseEvent): void {
+    if (!category_edit_state.active) {
+      return;
+    }
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+    const posting_li = target.closest<HTMLLIElement>("ul.postings > li");
+    if (posting_li == null || !ol.contains(posting_li)) {
+      return;
+    }
+    const link = target.closest("a");
+    if (link == null || !posting_li.contains(link)) {
+      return;
+    }
+    const row_li = posting_li.closest<HTMLLIElement>("li.transaction");
+    if (row_li == null) {
+      return;
+    }
+    // If this row's own editor is already open (on its OTHER posting -
+    // the one just clicked still has a real <a>, or this click wouldn't
+    // have found one above), find_editable_row can't be used as the
+    // validity check here: the currently-edited cell holds a mounted
+    // input, not an <a>, so account_from_link can't parse it and
+    // find_editable_row returns null for the WHOLE row, not just that
+    // one posting. Its editor having been opened at all already proved
+    // the row is editable, so skip straight to open_editor instead (which
+    // closes that editor - restoring a real link - before it re-derives
+    // anything).
+    if (active_editor?.row.li !== row_li) {
+      const row = find_editable_row(row_li, this_account);
+      if (row == null) {
+        return;
+      }
+    }
+    const postings = [
+      ...row_li.querySelectorAll<HTMLLIElement>(":scope > ul.postings > li"),
+    ];
+    const clicked_index = postings.indexOf(posting_li);
+    if (clicked_index !== 0 && clicked_index !== 1) {
+      return;
+    }
+    event.preventDefault();
+    if (!row_li.classList.contains(SELECTED_CLASS)) {
+      selected_row(ol)?.classList.remove(SELECTED_CLASS);
+      row_li.classList.add(SELECTED_CLASS);
+    }
+    open_editor(ol, this_account, clicked_index);
+  }
+  ol.addEventListener("click", click);
 
   const remove_interrupt = router.add_interrupt_handler(() => {
     flush_all().catch(log_error);
@@ -496,6 +774,7 @@ export function init_category_edit_mode(
 
   const teardown = () => {
     document.removeEventListener("keydown", keydown);
+    ol.removeEventListener("click", click);
     window.removeEventListener("beforeunload", on_beforeunload);
     remove_interrupt();
     close_active_editor();

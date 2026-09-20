@@ -184,6 +184,15 @@
     white-space: normal;
   }
 
+  /* The category editor's autocomplete dropdown is absolutely positioned
+     relative to its own input, but an ancestor's overflow:hidden still
+     clips it regardless - this cell needs overflow:visible for as long
+     as its account is being edited (see category_edit.svelte.ts, which
+     toggles this class alongside mounting/unmounting the editor). */
+  .description.category-editing {
+    overflow: visible;
+  }
+
   .tag,
   .link {
     margin-left: 8px;
