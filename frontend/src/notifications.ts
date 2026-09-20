@@ -23,17 +23,19 @@ type NotificationType = "info" | "warning" | "error";
 
 /**
  * Show a notification containing the given `msg` text and having class `cls`.
- * The notification is automatically removed after 5 seconds and on click
- * `callback` is called.
+ * The notification is automatically removed after `durationMs` (default
+ * 5 seconds) and on click `callback` is called.
  *
  * @param msg - The message to display
  * @param cls - The message type.
  * @param callback - The callback to execute on click..
+ * @param durationMs - How long to show the notification for, in ms.
  */
 export function notify(
   msg: string,
   cls: NotificationType = "info",
   callback?: () => void,
+  durationMs = 5000,
 ): void {
   const notification = document.createElement("li");
   notification.classList.add(cls);
@@ -45,7 +47,7 @@ export function notify(
   });
   setTimeout(() => {
     notification.remove();
-  }, 5000);
+  }, durationMs);
 }
 
 /**
