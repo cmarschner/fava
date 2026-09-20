@@ -7,6 +7,7 @@ interface for asynchronous functionality.
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 from abc import ABC
 from abc import abstractmethod
@@ -464,6 +465,48 @@ def delete_source_slice(entry_hash: str, sha256sum: str) -> str:
 def put_format_source(source: str) -> str:
     """Format beancount file."""
     return align(source, g.ledger.fava_options.currency_column)
+
+
+CATEGORY_RULES_PATH_ENV = "FAVA_CATEGORY_RULES_PATH"
+
+
+class CategoryRulesNotConfiguredError(FavaJSONAPIError):
+    """No category rules file is configured for this deployment."""
+
+    status = HTTPStatus.NOT_FOUND
+
+
+@api_endpoint
+def put_add_category_rule(value: str, account: str) -> str:
+    """Append a payee-matching categorization rule to an EXTERNAL rules
+    file (not part of this beancount ledger - see the spreadsheet-style
+    category editor's "also categorize future X this way?" opt-in prompt).
+
+    Written in the same "payee_contains" format the money repo's own
+    mined rules already use (rules/category_rules.yaml there), so it's
+    live on that repo's next build_2026.py run with zero extra parsing on
+    its side. Deliberately has no opinion on what reads this file or how
+    - it only knows a path, taken from FAVA_CATEGORY_RULES_PATH (unset by
+    default, so this is a no-op/404 unless a deployment explicitly mounts
+    a writable rules file and points this at it - see the money repo's
+    docker-compose.yml).
+    """
+    path_str = os.environ.get(CATEGORY_RULES_PATH_ENV)
+    if not path_str:
+        raise CategoryRulesNotConfiguredError(
+            f"Set {CATEGORY_RULES_PATH_ENV} to enable rule learning."
+        )
+    path = Path(path_str)
+    text = path.read_text(encoding="utf-8")
+    needle = f'value: "{value}"'
+    if needle in text:
+        # Already covered by an existing rule for this exact payee value -
+        # avoid a duplicate, mirroring the money repo's own mine_qif_rules()
+        # dedup logic (skip a (match, value) pair already present).
+        return f"A rule for {value!r} already exists - not duplicated."
+    entry = f'  - match: payee_contains\n    value: "{value}"\n    account: "{account}"\n'
+    path.write_text(text.rstrip("\n") + "\n" + entry, encoding="utf-8")
+    return f"Added rule: {value!r} -> {account!r}."
 
 
 class FileDoesNotExistError(FavaJSONAPIError):

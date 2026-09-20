@@ -75,6 +75,7 @@ type GetEndpoint =
   | "source"
   | "statistics";
 type PutEndpoint =
+  | "add_category_rule"
   | "add_document"
   | "add_entries"
   | "attach_document"
@@ -340,6 +341,8 @@ type Put<T> = (body: T) => Promise<string>;
 
 // PUT endpoints
 
+export const put_add_category_rule: Put<{ value: string; account: string }> =
+  define_put_json("add_category_rule");
 export const put_add_document = define_put_form("add_document");
 const put_add_entries: Put<{ entries: NonEmptyArray<Entry> }> =
   define_put_json("add_entries");
