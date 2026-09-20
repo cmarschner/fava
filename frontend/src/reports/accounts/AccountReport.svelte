@@ -84,6 +84,7 @@
       {journal}
       initial_sort={["date", "desc"]}
       show_change_and_balance={true}
+      this_account={account}
     />
   {:else if interval_balances && is_non_empty(interval_balances) && budgets && dates}
     <IntervalTreeTable

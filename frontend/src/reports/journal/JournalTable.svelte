@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
 
-  import { _ } from "../../i18n.ts";
+  import { _, format } from "../../i18n.ts";
   import { get_el } from "../../lib/dom.ts";
   import { shallow_equal } from "../../lib/equals.ts";
   import { log_error } from "../../log.ts";
@@ -13,6 +13,11 @@
     journal_sort,
   } from "../../stores/journal.ts";
   import { get_account_from_url } from "../accounts/index.ts";
+  import {
+    category_edit_state,
+    init_category_edit_mode,
+    toggle_category_edit_mode,
+  } from "./category_edit.svelte.ts";
   import { handle_journal_click } from "./click_handler.ts";
   import JournalFilters from "./JournalFilters.svelte";
   import JournalHeaders from "./JournalHeaders.svelte";
@@ -25,6 +30,11 @@
     initial_sort: JournalSort;
     journal: DocumentFragment;
     show_change_and_balance: boolean;
+    /** When set, this is an account journal/register page and the
+     * spreadsheet-style category editor is available for it (see
+     * category_edit.svelte.ts) - edit mode lets each row's counter-account
+     * be changed in place instead of opening the full slice editor. */
+    this_account?: string | undefined;
   }
 
   let {
@@ -32,6 +42,7 @@
     initial_sort,
     journal,
     show_change_and_balance,
+    this_account = undefined,
   }: Props = $props();
 
   let ol: HTMLOListElement | undefined = $state();
@@ -79,9 +90,35 @@
     }
     return undefined;
   });
+
+  $effect(() => {
+    if (ol && this_account != null) {
+      return init_category_edit_mode(ol, this_account);
+    }
+    return undefined;
+  });
 </script>
 
 <JournalFilters />
+{#if this_account != null}
+  <form class="flex-row">
+    <button
+      type="button"
+      class:inactive={!category_edit_state.active}
+      title={_("Edit counter-accounts directly in this journal")}
+      onclick={toggle_category_edit_mode}
+    >
+      {_("Edit categories")}
+    </button>
+    {#if category_edit_state.pending > 0}
+      <span class="category-edit-unsaved">
+        {format(_("%(count)s unsaved"), {
+          count: String(category_edit_state.pending),
+        })}
+      </span>
+    {/if}
+  </form>
+{/if}
 <JournalHeaders
   disabled={$is_loading}
   {show_change_and_balance}
@@ -135,3 +172,10 @@
     });
   }}
 ></ol>
+
+<style>
+  .category-edit-unsaved {
+    align-self: center;
+    color: var(--warning);
+  }
+</style>
