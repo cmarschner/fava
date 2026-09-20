@@ -15,6 +15,7 @@
   import { get_account_from_url } from "../accounts/index.ts";
   import {
     category_edit_state,
+    close_active_editor,
     init_category_edit_mode,
     toggle_category_edit_mode,
   } from "./category_edit.svelte.ts";
@@ -128,6 +129,12 @@
       shallow_equal($journal_sort, [column, "asc"]) ? "desc" : "asc",
     ];
     if (ol) {
+      // sort_journal reorders the actual <li> DOM nodes in place; doing
+      // that while a CategoryEditCell is mounted inside one of them (and
+      // holds the "selected" row reference / an in-flight pending edit)
+      // is asking for trouble - close it first so the reorder only ever
+      // has to move plain, already-rendered rows.
+      close_active_editor();
       sort_journal(ol, sort);
       $journal_sort = sort;
     }
