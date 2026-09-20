@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { _ } from "../i18n.ts";
   import { keyboardShortcut } from "../keyboard-shortcuts.ts";
   import { router } from "../router.ts";
   import { ledger_data } from "../stores/index.ts";
@@ -30,8 +31,9 @@
   </h1>
   <button
     type="button"
-    hidden={!$has_changes}
     class="reload-page"
+    class:has-changes={$has_changes}
+    title={_("Reload")}
     {@attach keyboardShortcut("r")}
     onclick={router.reload}
   >
@@ -42,8 +44,22 @@
 </header>
 
 <style>
+  /* Previously only rendered at all when Fava's own change-detection
+     (get_changed(), backed by an inotify watcher known to be unreliable
+     on a bind-mounted ledger - see category_edit.svelte.ts's flush_all
+     doc comment) had actually fired - meaning if that detection missed a
+     change (its own file being fixed externally, e.g. by a process other
+     than Fava's own save endpoint), there was no visible way at all to
+     force a reload. Always available now; the warning color is reserved
+     for when Fava itself believes something changed, so it still pops in
+     the common case, but a manual reload no longer depends on that
+     detection succeeding. */
   .reload-page {
     color: var(--dark-gray);
+    background-color: var(--background);
+  }
+
+  .reload-page.has-changes {
     background-color: var(--warning);
   }
 
