@@ -16,6 +16,9 @@
     required?: boolean;
     /** An event handler to run whenever the value changes (on select, enter, or blur). */
     onchange?: ((value: string) => void) | undefined;
+    /** See AutocompleteInput's `on_blur_change` - an optional separate
+     * handler for a blur that isn't a deliberate select/Enter/Tab. */
+    on_blur_change?: ((value: string) => void) | undefined;
   }
 
   let {
@@ -24,6 +27,7 @@
     date,
     required,
     onchange,
+    on_blur_change,
   }: Props = $props();
 
   let check_validity = $derived((val: string) =>
@@ -51,4 +55,5 @@
   {required}
   suggestions={filtered_suggestions}
   {onchange}
+  {on_blur_change}
 />

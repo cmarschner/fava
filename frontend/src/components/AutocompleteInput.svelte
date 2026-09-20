@@ -55,6 +55,13 @@
     onselect?: () => void;
     /** An event handler to run whenever the value changes (on select, enter, or blur). */
     onchange?: ((value: string) => void) | undefined;
+    /** An event handler for a blur that isn't a deliberate select/Enter/Tab
+     * (i.e. focus was lost to something else entirely, most often a mouse
+     * click elsewhere on the page). Falls back to `onchange` if not given,
+     * so every existing caller keeps its current behavior unchanged - only
+     * a caller that wants to treat "lost focus" differently from "the user
+     * chose a value" needs to pass this. */
+    on_blur_change?: ((value: string) => void) | undefined;
   }
 
   let {
@@ -72,6 +79,7 @@
     onenter,
     onselect,
     onchange,
+    on_blur_change,
   }: Props = $props();
 
   const uid = $props.id();
@@ -190,7 +198,7 @@
         // combobox when it is left via Tab.
         select(active_suggestion);
       } else {
-        onchange?.(value);
+        (on_blur_change ?? onchange)?.(value);
         hidden = true;
       }
       tab_pressed = false;

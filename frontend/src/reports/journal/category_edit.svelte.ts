@@ -332,6 +332,15 @@ export function commit_edit(
   if (new_account === posting.account) {
     return;
   }
+  if (!new_account.trim()) {
+    // Defense in depth against an empty/blank account ever reaching the
+    // ledger - Escape is the primary way to discard an in-progress edit
+    // (see oncancel/close_active_editor), but this guards every other
+    // path (a stray blur mid-clear, a future caller) too. Silently no-op
+    // rather than commit garbage; the cell already shows whatever the
+    // user typed, so nothing visually disappears.
+    return;
+  }
   const key = pending_key(row.entry_hash, slot);
   const existing = pending.get(key);
   pending.set(key, {
@@ -406,7 +415,7 @@ let move_generation = 0;
  * on the stale closure sees it's no longer current) and always restoring
  * the cell's rendered text after unmount (not just on a real commit) closes
  * both holes. */
-function close_active_editor(): void {
+export function close_active_editor(): void {
   const editor = active_editor;
   if (editor == null) {
     return;
@@ -432,6 +441,15 @@ function open_editor(
   this_account: string,
   slot?: 0 | 1,
 ): void {
+  // Edit mode may have been turned off in the moment between this call
+  // being scheduled (a queueMicrotask reopen from a move/fill-down/click)
+  // and it actually running - e.g. toggling the "Edit categories" button
+  // off while a row-advance was already in flight. Without this guard,
+  // that stale reopen would silently undo the toggle-off by mounting a
+  // fresh editor right after close_active_editor() ran.
+  if (!category_edit_state.active) {
+    return;
+  }
   close_active_editor();
   const li = selected_row(ol);
   if (li == null) {
@@ -502,6 +520,32 @@ function open_editor(
         }
         commit_edit(row, target_slot, value);
         move_to_row(1);
+      },
+      // A blur that isn't Tab/Enter/Arrow/select - focus was lost to
+      // something else entirely, almost always a mouse click elsewhere on
+      // the page (a table header, blank space, the edit-mode toggle
+      // button, ...). Previously this went through the SAME path as
+      // oncommit above (AutocompleteInput has no way to tell them apart
+      // on its own - see on_blur_change), so any click anywhere would
+      // save-and-advance-to-the-next-row, which is what a plain click
+      // should never do. Save what's here (don't lose typed input) but
+      // stay put - no row/cell movement.
+      onblur: (value: string) => {
+        if (!is_current()) {
+          return;
+        }
+        commit_edit(row, target_slot, value);
+        close_active_editor();
+      },
+      // Escape: discard the edit entirely and restore the original value.
+      // close_active_editor() re-renders the cell from `posting.account`,
+      // which commit_edit() was never called to change here, so this is
+      // already exactly "revert to original" with no extra bookkeeping.
+      oncancel: () => {
+        if (!is_current()) {
+          return;
+        }
+        close_active_editor();
       },
       onarrowdown: (value: string) => {
         if (!is_current()) {
