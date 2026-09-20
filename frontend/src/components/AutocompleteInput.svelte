@@ -54,7 +54,7 @@
     /** An event handler to run on an element being selected. */
     onselect?: () => void;
     /** An event handler to run whenever the value changes (on select, enter, or blur). */
-    onchange?: (value: string) => void;
+    onchange?: ((value: string) => void) | undefined;
   }
 
   let {
