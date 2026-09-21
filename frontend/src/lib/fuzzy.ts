@@ -1,4 +1,23 @@
 /**
+ * Fold a single character to a diacritic-insensitive base form, e.g. "ö" ->
+ * "o", so that typing a plain "o" can match account/payee names that use
+ * the accented form (common with German umlauts: ÖPNV, Straße, ...).
+ * NFD-decomposes the character into a base letter plus zero or more
+ * combining marks and keeps just the base - this is applied per character
+ * (not to a whole string at once) specifically so it stays one-to-one with
+ * the original string's character positions, which fuzzytest/fuzzywrap's
+ * index-based matching and slicing both depend on.
+ */
+function fold_char(char: string): string {
+  return char.normalize("NFD").charAt(0);
+}
+
+/** Diacritic-insensitive lowercase, preserving length/position. */
+function fold(text: string): string {
+  return [...text].map((c) => fold_char(c.toLowerCase())).join("");
+}
+
+/**
  * Fuzzy match a pattern against a string.
  *
  * @param pattern The pattern to search for.
@@ -6,12 +25,13 @@
  *
  * Returns a score greater than zero if all characters of `pattern` can be
  * found in order in `string`. For lowercase characters in `pattern` match both
- * lower and upper case, for uppercase only an exact match counts.
+ * lower and upper case, for uppercase only an exact match counts. Matching
+ * is also diacritic-insensitive when `pattern` is lowercase (see fold_char).
  */
 export function fuzzytest(pattern: string, text: string): number {
   const casesensitive = pattern === pattern.toLowerCase();
   const exact = casesensitive
-    ? text.toLowerCase().indexOf(pattern)
+    ? fold(text).indexOf(fold(pattern))
     : text.indexOf(pattern);
   if (exact > -1) {
     return pattern.length ** 2;
@@ -21,7 +41,11 @@ export function fuzzytest(pattern: string, text: string): number {
   let pindex = 0;
   for (const char of text) {
     const search = pattern[pindex];
-    if (char === search || char.toLowerCase() === search) {
+    if (
+      char === search ||
+      char.toLowerCase() === search ||
+      (search != null && fold_char(char.toLowerCase()) === fold_char(search))
+    ) {
       pindex += 1;
       localScore += 1;
     } else {
@@ -64,7 +88,7 @@ export function fuzzywrap(pattern: string, text: string): FuzzyWrappedText {
   }
   const casesensitive = pattern === pattern.toLowerCase();
   const exact = casesensitive
-    ? text.toLowerCase().indexOf(pattern)
+    ? fold(text).indexOf(fold(pattern))
     : text.indexOf(pattern);
   if (exact > -1) {
     const before = text.slice(0, exact);
@@ -89,7 +113,11 @@ export function fuzzywrap(pattern: string, text: string): FuzzyWrappedText {
   const result: FuzzyWrappedText = [];
   for (const char of text) {
     const search = pattern[pindex];
-    if (char === search || char.toLowerCase() === search) {
+    if (
+      char === search ||
+      char.toLowerCase() === search ||
+      (search != null && fold_char(char.toLowerCase()) === fold_char(search))
+    ) {
       match = match != null ? match + char : char;
       if (plain != null) {
         result.push(["text", plain]);
