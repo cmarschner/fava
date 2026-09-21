@@ -39,11 +39,8 @@
       {@const has_balance =
         !is_empty(n.balance) ||
         (account_budget != null && !is_empty(account_budget.budget))}
-      {@const show_balance = !is_toggled && has_balance}
-      {@const shown_balance = show_balance ? n.balance : n.balance_children}
-      {@const shown_budget = show_balance
-        ? account_budget?.budget
-        : account_budget?.budget_children}
+      {@const shown_balance = n.balance_children}
+      {@const shown_budget = account_budget?.budget_children}
       <span class="num other" class:dimmed={!is_toggled && !has_balance}>
         {#each Object.entries(shown_balance) as [currency, number] (currency)}
           {@const budget = shown_budget?.[currency]}
