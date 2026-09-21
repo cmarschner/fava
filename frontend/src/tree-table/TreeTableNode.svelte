@@ -26,12 +26,11 @@
   let is_toggled = $derived($toggled_accounts.has(account));
 
   let has_balance = $derived(!is_empty(node.balance));
-  /** Whether to show the balance (or balance_children) */
-  let show_balance = $derived(!is_toggled && has_balance);
-  let shown_balance = $derived(
-    show_balance ? node.balance : node.balance_children,
-  );
-  let shown_cost = $derived(show_balance ? node.cost : node.cost_children);
+  // Always show the cumulative balance (own + all descendants) - a row's
+  // number should be the full subtree total, regardless of whether the
+  // account also has postings of its own.
+  let shown_balance = $derived(node.balance_children);
+  let shown_cost = $derived(node.cost_children);
   let shown_balance_other = $derived(
     Object.entries(shown_balance)
       .sort()
