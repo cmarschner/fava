@@ -52,11 +52,57 @@ function open_selected(ol: HTMLOListElement): void {
   link?.click();
 }
 
+/** Elements a click on which already does something of its own - open a
+ * link (the date, a document, an account), toggle indicators, filter by
+ * tag/payee/metadata, or (in category-edit mode) open an account editor.
+ * A click landing on one of these should do only that, not also select
+ * the row underneath it - see click_handler.ts and category_edit.svelte.ts
+ * for what each of these already does on click. */
+const INTERACTIVE_SELECTOR =
+  "a, button, input, .tag, .link, .payee, dt, dd, .indicators";
+
+/** The row (a direct child of `ol`) containing `target`, however deeply
+ * nested `target` is (e.g. inside a transaction's own nested postings
+ * <li> elements) - or null if `target` isn't inside any row of `ol`. */
+function containing_row(
+  ol: HTMLOListElement,
+  target: Element,
+): HTMLLIElement | null {
+  let el: Element | null = target;
+  while (el && el !== ol) {
+    if (el.parentElement === ol) {
+      return el instanceof HTMLLIElement ? el : null;
+    }
+    el = el.parentElement;
+  }
+  return null;
+}
+
+/** Select the row under a click, mirroring what ArrowUp/ArrowDown already
+ * do - but only for a click that isn't on one of the row's own
+ * interactive elements (see INTERACTIVE_SELECTOR), which already have
+ * their own click behavior that shouldn't be reinterpreted as row
+ * selection. */
+function click(ol: HTMLOListElement, event: MouseEvent): void {
+  const target = event.target;
+  if (!(target instanceof Element) || target.closest(INTERACTIVE_SELECTOR)) {
+    return;
+  }
+  const li = containing_row(ol, target);
+  if (li == null) {
+    return;
+  }
+  ol
+    .querySelector<HTMLLIElement>(`:scope > li.${SELECTED_CLASS}`)
+    ?.classList.remove(SELECTED_CLASS);
+  li.classList.add(SELECTED_CLASS);
+}
+
 /**
- * Attach the ArrowUp/ArrowDown/Enter journal navigation to `ol` for as long
- * as the caller keeps the returned cleanup un-called (intended to be run
- * from a component's `$effect`, active only while the journal report is
- * mounted).
+ * Attach the ArrowUp/ArrowDown/Enter journal navigation, and click-to-select
+ * (see `click` above), to `ol` for as long as the caller keeps the returned
+ * cleanup un-called (intended to be run from a component's `$effect`,
+ * active only while the journal report is mounted).
  *
  * Like Fava's other keyboard shortcuts, this ignores the event while focus
  * is in an editable element (e.g. the journal filter input, or the source
@@ -86,8 +132,13 @@ export function init_journal_keyboard_navigation(
         break;
     }
   }
+  function on_click(event: MouseEvent): void {
+    click(ol, event);
+  }
   document.addEventListener("keydown", keydown);
+  ol.addEventListener("click", on_click);
   return () => {
     document.removeEventListener("keydown", keydown);
+    ol.removeEventListener("click", on_click);
   };
 }
