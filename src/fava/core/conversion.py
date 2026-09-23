@@ -102,17 +102,26 @@ def convert_position(
     cost_ = pos.cost
     if cost_ is not None:
         cost_currency = cost_.currency
-        if cost_currency != target_currency:
-            base_quote1 = (units_.currency, cost_currency)
-            rate1 = prices.get_price(base_quote1, date)
-            if rate1 is not None:
-                base_quote2 = (cost_currency, target_currency)
-                rate2 = prices.get_price(base_quote2, date)
-                if rate2 is not None:
-                    return _Amount(
-                        units_.number * rate1 * rate2,
-                        target_currency,
-                    )
+        if cost_currency == target_currency:
+            # The cost is already denominated in the target currency (e.g.
+            # a security whose cost basis was booked in the operating
+            # currency but whose own price quotes are in some other
+            # currency, or aren't available at all for this date) - no
+            # further hop is needed, the cost value itself IS the answer.
+            # Falling through to `return units_` here (the previous
+            # behaviour) silently returned the position unconverted even
+            # though a correct value was directly at hand.
+            return _Amount(units_.number * cost_.number, target_currency)
+        base_quote1 = (units_.currency, cost_currency)
+        rate1 = prices.get_price(base_quote1, date)
+        if rate1 is not None:
+            base_quote2 = (cost_currency, target_currency)
+            rate2 = prices.get_price(base_quote2, date)
+            if rate2 is not None:
+                return _Amount(
+                    units_.number * rate1 * rate2,
+                    target_currency,
+                )
     return units_
 
 
