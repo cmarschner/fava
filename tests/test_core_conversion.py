@@ -158,7 +158,14 @@ def test_get_market_value(
         ("10 STOCK {5 GBP}", "EUR", None, "3600 EUR"),
         ("10 STOCK {5 GBP}", "UNKNOWN", None, "10 STOCK"),
         ("10 STOCK {5 UNKNOWN}", "UNKNOWN2", None, "10 STOCK"),
-        ("10 STOCK {5 UNKNOWN}", "UNKNOWN", None, "10 STOCK"),
+        # The cost is already in the target currency - no price lookup is
+        # needed at all, the cost value itself is the answer (10 * 5).
+        # Previously fell through to raw units even in this case, a real
+        # bug: a position whose cost happens to be booked in the target/
+        # operating currency, but whose own price quotes are in some
+        # other currency (or missing for the date in question), silently
+        # never converted.
+        ("10 STOCK {5 UNKNOWN}", "UNKNOWN", None, "50 UNKNOWN"),
     ],
 )
 def test_convert_position(
