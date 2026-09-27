@@ -113,22 +113,35 @@ discoverable across sessions.
   indented category tree with subtotals per level, matching Lexware's
   own row hierarchy instead of one flat row per leaf account.
 - **Phase 3 - drill-through links and period-over-period deltas**:
-  1. **Cell drill-through**: each pivot cell corresponds to a real
-     `(row_key, col_key)` combination - when the row dimension is
-     account-like and the column dimension is date-like, the cell
-     should link to the Journal (or account page), filtered to that
-     account and that period, so clicking a number opens the real
-     transactions behind it - the same "Kontoblatt" drill-down
-     Finanzmanager's Minibericht gives you. Reuse the account/time
-     filter query params the Journal already supports. If the
+  1. **Drill-through links**: not just individual cells - three
+     related but distinct link targets, each filtered to only what it
+     actually represents:
+     - A **cell** (row_key + col_key) links to the Journal filtered by
+       both, the same "Kontoblatt" drill-down Finanzmanager's
+       Minibericht gives you.
+     - A **row header** links to the Journal filtered by just that row
+       value, across every column (e.g. the whole account, all
+       periods).
+     - A **column header** links to the Journal filtered by just that
+       column value, across every row (e.g. the whole period, every
+       account).
+     Don't assume columns are always a time period - the column
+     dimension can be any pivoted field (another category, a payee,
+     etc.), same as rows. The filter each link carries depends on
+     what that dimension actually is (account-like -> `account=`,
+     date-like -> `time=`, otherwise whatever the Journal's filter bar
+     can express for it, if anything) - only show a link when the
+     dimension is genuinely translatable into a real filter, same
+     don't-force-it discipline as the rest of this plan. If the
      underlying query has its own WHERE clause beyond the pivot
      dimensions (e.g. `account ~ '^Expenses'`), investigate whether
-     that can be folded into the drill-through link too (via the
-     advanced filter bar's boolean syntax) rather than only carrying
-     the row/col values - note the real limitation if that turns out
-     to be impractical rather than forcing it. When a dimension isn't
-     account-like or date-like, don't show a link - same
-     don't-force-it discipline as the rest of this plan.
+     that can be folded into these links too (via the advanced filter
+     bar's boolean syntax) rather than only carrying the row/col
+     values - note the real limitation if that turns out to be
+     impractical rather than forcing it.
+     This is inherently a live-UI feature - none of it can carry over
+     into the CSV export (static data, no links), which is fine and
+     expected, not a gap to fix.
   2. **Period-over-period delta columns**: a checkbox (or small
      control) that, when enabled, adds absolute and/or % change vs.
      the immediately preceding column, per row, sortable the same way
