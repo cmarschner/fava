@@ -112,11 +112,38 @@ discoverable across sessions.
   Icicle charts) to turn a flat account-name row dimension into an
   indented category tree with subtotals per level, matching Lexware's
   own row hierarchy instead of one flat row per leaf account.
-- **Phase 3 - starter query snippets**: a small set of ready-made BQL
+- **Phase 3 - drill-through links and period-over-period deltas**:
+  1. **Cell drill-through**: each pivot cell corresponds to a real
+     `(row_key, col_key)` combination - when the row dimension is
+     account-like and the column dimension is date-like, the cell
+     should link to the Journal (or account page), filtered to that
+     account and that period, so clicking a number opens the real
+     transactions behind it - the same "Kontoblatt" drill-down
+     Finanzmanager's Minibericht gives you. Reuse the account/time
+     filter query params the Journal already supports. If the
+     underlying query has its own WHERE clause beyond the pivot
+     dimensions (e.g. `account ~ '^Expenses'`), investigate whether
+     that can be folded into the drill-through link too (via the
+     advanced filter bar's boolean syntax) rather than only carrying
+     the row/col values - note the real limitation if that turns out
+     to be impractical rather than forcing it. When a dimension isn't
+     account-like or date-like, don't show a link - same
+     don't-force-it discipline as the rest of this plan.
+  2. **Period-over-period delta columns**: a checkbox (or small
+     control) that, when enabled, adds absolute and/or % change vs.
+     the immediately preceding column, per row, sortable the same way
+     as any other pivot column. Real edge case to handle explicitly,
+     not silently: when the previous column's value is zero (or
+     missing), % change is undefined - show that as a real "n/a"/dash
+     state, never `Infinity`/`NaN`/a raw division error. Absolute and
+     % delta are conceptually separate toggles (user said "absolute
+     and/or %") - support enabling either or both independently rather
+     than one combined mode.
+- **Phase 4 - starter query snippets**: a small set of ready-made BQL
   queries (e.g. monthly expenses by category, year-over-year income)
-  that open directly into the Phase 1/2 pivot view, so the user doesn't
+  that open directly into the Phase 1-3 pivot view, so the user doesn't
   need to hand-write BQL for the reports they used most in Finanzmanager.
-- **Phase 4 - unify the Journal and Query views**: real architectural
+- **Phase 5 - unify the Journal and Query views**: real architectural
   finding (verified, not re-derived): the Journal/Kontoblatt view and
   the Query view are two genuinely separate systems today - Journal uses
   a hand-built filter-DSL (`TimeFilter`/`AdvancedFilter`/`AccountFilter`
@@ -136,11 +163,11 @@ discoverable across sessions.
   2. Separately: enrich the Journal's own Account filter for real
      multi-account include/exclude (closer to Finanzmanager's checkbox
      list) - doesn't need BQL, independent of #1.
-  Explicitly NOT in scope for Phase 4: aggregated/pivoted Query results
-  (Phases 1-2's work) don't get this treatment - those aren't
+  Explicitly NOT in scope for Phase 5: aggregated/pivoted Query results
+  (Phases 1-3's work) don't get this treatment - those aren't
   individual entries, so Kontoblatt-style editing doesn't apply there;
   that stays on the table/pivot rendering path.
-  User's instruction: implement once Phases 1-3 are done - queued here,
+  User's instruction: implement once Phases 1-4 are done - queued here,
   not started.
 
 ## Verification checklist (this branch, before it's considered done)
