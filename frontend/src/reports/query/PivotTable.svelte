@@ -5,8 +5,8 @@
 -->
 <script lang="ts">
   import { _ } from "../../i18n.ts";
+  import { pivot_cell_key, type PivotResult } from "./pivot.ts";
   import QueryCellValue from "./QueryCellValue.svelte";
-  import type { PivotResult } from "./pivot.ts";
 
   interface Props {
     pivot: PivotResult;
@@ -30,7 +30,7 @@
       <tr>
         <td>{row_key || _("(empty)")}</td>
         {#each pivot.col_keys as col_key (col_key)}
-          {@const value = pivot.cells.get(`${row_key} ${col_key}`)}
+          {@const value = pivot.cells.get(pivot_cell_key(row_key, col_key))}
           <td class="num">
             {#if value != null}
               <QueryCellValue value={value} />
