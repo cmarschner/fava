@@ -44,6 +44,7 @@ from fava.core.filters import FilterError
 from fava.core.group_entries import group_entries_by_type
 from fava.core.ingest import filepath_in_primary_imports_folder
 from fava.core.misc import align
+from fava.core.query_shell import FavaShellError
 from fava.helpers import FavaAPIError
 from fava.internal_api import ChartApi
 from fava.internal_api import get_errors
@@ -78,6 +79,13 @@ class ErrorResponse(Struct, frozen=True):
     """Error response object structure."""
 
     error: str
+    #: Character offset of the error in the query string, if known
+    #: (currently only populated for query parse/compilation errors).
+    pos: int | None = None
+    endpos: int | None = None
+    #: 1-based line/column of the error, if known.
+    line: int | None = None
+    col: int | None = None
 
 
 class SuccessResponse(Struct, frozen=True):
@@ -87,9 +95,17 @@ class SuccessResponse(Struct, frozen=True):
     mtime: str
 
 
-def json_err(msg: str, status: HTTPStatus) -> Response:
+def json_err(
+    msg: str,
+    status: HTTPStatus,
+    *,
+    pos: int | None = None,
+    endpos: int | None = None,
+    line: int | None = None,
+    col: int | None = None,
+) -> Response:
     """Jsonify the error message."""
-    res = jsonify(ErrorResponse(msg))
+    res = jsonify(ErrorResponse(msg, pos, endpos, line, col))
     res.status = status
     return res
 
@@ -168,6 +184,22 @@ class NotAFileError(FavaJSONAPIError):
 
     def __init__(self, filename: str) -> None:
         super().__init__(f"Not a file: '{filename}'")
+
+
+@json_api.errorhandler(FavaShellError)
+def _(error: FavaShellError) -> Response:
+    # More specific than the generic FavaAPIError handler below, so Flask
+    # dispatches query-shell errors (parse/compilation errors in
+    # particular) here instead, including their real position info when
+    # available - see query_shell.py's own _set_position_from_parseinfo.
+    return json_err(
+        error.message,
+        HTTPStatus.INTERNAL_SERVER_ERROR,
+        pos=error.pos,
+        endpos=error.endpos,
+        line=error.line,
+        col=error.col,
+    )
 
 
 @json_api.errorhandler(FavaAPIError)

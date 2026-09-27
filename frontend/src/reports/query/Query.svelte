@@ -2,12 +2,14 @@
   import { onMount } from "svelte";
 
   import { get_query } from "../../api/index.ts";
+  import { FetchHTTPError } from "../../lib/fetch.ts";
   import { err, ok, type Result } from "../../lib/result.ts";
   import { log_error } from "../../log.ts";
   import { router } from "../../router.ts";
   import { filter_params } from "../../stores/filters.ts";
   import { query_shell_history } from "../../stores/query.ts";
   import { search_params } from "../../stores/url.ts";
+  import type { QueryError } from "./errors.ts";
   import type { QueryReportProps } from "./index.ts";
   import QueryBox from "./QueryBox.svelte";
   import QueryEditor from "./QueryEditor.svelte";
@@ -18,7 +20,23 @@
   /** The current query string in the editor. */
   let query_string = $state.raw("");
   /** The currently loaded results. */
-  let results: Record<string, Result<QueryResult, string>> = $state({});
+  let results: Record<string, Result<QueryResult, QueryError>> = $state({});
+
+  /** Turn a rejected get_query() promise into a structured QueryError. */
+  function to_query_error(error: unknown): QueryError {
+    if (error instanceof FetchHTTPError) {
+      const { position } = error;
+      return position
+        ? {
+            message: error.message,
+            range: { pos: position.pos, endpos: position.endpos },
+          }
+        : { message: error.message };
+    }
+    return {
+      message: error instanceof Error ? error.message : "INTERNAL ERROR",
+    };
+  }
   /** The toggle states of the individual boxes. */
   const is_open: Record<string, boolean> = $state({});
 
@@ -56,8 +74,7 @@
     get_query({ query_string: query, ...$filter_params })
       .then(
         (res) => ok(res),
-        (error: unknown) =>
-          err(error instanceof Error ? error.message : "INTERNAL ERROR"),
+        (error: unknown) => err(to_query_error(error)),
       )
       .then((res) => {
         results[query] = res;
@@ -77,8 +94,7 @@
       get_query({ query_string: query, ...$filter_params })
         .then(
           (res) => ok(res),
-          (error: unknown) =>
-            err(error instanceof Error ? error.message : "INTERNAL ERROR"),
+          (error: unknown) => err(to_query_error(error)),
         )
         .then((res) => {
           results[query] = res;

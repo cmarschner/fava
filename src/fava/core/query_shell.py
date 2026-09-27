@@ -38,6 +38,15 @@ if TYPE_CHECKING:  # pragma: no cover
 class FavaShellError(FavaAPIError):
     """An error in the Fava BQL shell, will be turned into a string."""
 
+    #: Character offset of the error in the query string, if known.
+    pos: int | None = None
+    #: Character offset where the error ends, if known.
+    endpos: int | None = None
+    #: 1-based line number of the error, if known.
+    line: int | None = None
+    #: 1-based column number of the error, if known.
+    col: int | None = None
+
 
 class QueryNotFoundError(FavaShellError):
     """Query '{name}' not found."""
@@ -53,11 +62,34 @@ class TooManyRunArgsError(FavaShellError):
         super().__init__(f"Too many args to run: '{args}'.")
 
 
+def _set_position_from_parseinfo(error: FavaShellError, parseinfo: object) -> None:
+    """Copy position info from a tatsu ParseInfo onto a FavaShellError.
+
+    `parseinfo` is a `tatsu.infos.ParseInfo` namedtuple (tokenizer, rule,
+    pos, endpos, line, endline, alerts) as attached by beanquery's own
+    ParseError/CompilationError - verified directly against the installed
+    beanquery/tatsu packages. Deliberately does NOT use `parseinfo.line`/
+    `.endline`: beanquery's own parser populates `endline` with `[]`, not
+    a real line number (a real bug in the beanquery version this targets,
+    not something to trust), so line/col are both recomputed from the
+    tokenizer instead, which is reliable for an arbitrary position.
+    """
+    if parseinfo is None:
+        return
+    tokenizer = parseinfo.tokenizer
+    pos = parseinfo.pos
+    error.pos = pos
+    error.endpos = parseinfo.endpos
+    error.line = tokenizer.posline(pos) + 1
+    error.col = tokenizer.poscol(pos) + 1
+
+
 class QueryCompilationError(FavaShellError):
     """Query compilation error."""
 
     def __init__(self, err: CompilationError) -> None:
         super().__init__(f"Query compilation error: {err!s}.")
+        _set_position_from_parseinfo(self, err.parseinfo)
 
 
 class QueryParseError(FavaShellError):
@@ -65,6 +97,7 @@ class QueryParseError(FavaShellError):
 
     def __init__(self, err: ParseError) -> None:
         super().__init__(f"Query parse error: {err!s}.")
+        _set_position_from_parseinfo(self, err.parseinfo)
 
 
 class NonExportableQueryError(FavaShellError):

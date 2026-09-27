@@ -1,6 +1,6 @@
 import { syntaxHighlighting } from "@codemirror/language";
 import { EditorState } from "@codemirror/state";
-import { EditorView, keymap, placeholder } from "@codemirror/view";
+import { Decoration, EditorView, keymap, placeholder } from "@codemirror/view";
 
 import { base_extensions } from "./base-extensions.ts";
 import { bql_highlight } from "./bql-highlight.ts";
@@ -26,15 +26,36 @@ export function init_document_preview_editor(): EditorView {
 
 /**
  * A basic readonly BQL editor that only does syntax highlighting.
+ *
+ * `error_range`, if given, marks that character range with a decoration
+ * (`.cm-query-error-span`) - used to highlight the offending span of a
+ * failed query, when the backend was able to provide real position info.
+ * Silently ignored if the range falls outside the document (defensive -
+ * PEG-parser backtracking means error positions aren't always exactly
+ * where you'd expect, so this must never throw).
  */
-export function init_readonly_query_editor(value: string): EditorView {
+export function init_readonly_query_editor(
+  value: string,
+  error_range?: { pos: number; endpos: number },
+): EditorView {
+  const extensions = [
+    bql_language_support,
+    syntaxHighlighting(bql_highlight),
+    EditorState.readOnly.of(true),
+  ];
+  if (error_range) {
+    const from = Math.max(0, Math.min(error_range.pos, value.length));
+    const to = Math.max(from + 1, Math.min(error_range.endpos, value.length));
+    if (from < value.length) {
+      const mark = Decoration.mark({ class: "cm-query-error-span" });
+      extensions.push(
+        EditorView.decorations.of(Decoration.set([mark.range(from, to)])),
+      );
+    }
+  }
   return new EditorView({
     doc: value,
-    extensions: [
-      bql_language_support,
-      syntaxHighlighting(bql_highlight),
-      EditorState.readOnly.of(true),
-    ],
+    extensions,
   });
 }
 

@@ -116,6 +116,32 @@ discoverable across sessions.
   queries (e.g. monthly expenses by category, year-over-year income)
   that open directly into the Phase 1/2 pivot view, so the user doesn't
   need to hand-write BQL for the reports they used most in Finanzmanager.
+- **Phase 4 - unify the Journal and Query views**: real architectural
+  finding (verified, not re-derived): the Journal/Kontoblatt view and
+  the Query view are two genuinely separate systems today - Journal uses
+  a hand-built filter-DSL (`TimeFilter`/`AdvancedFilter`/`AccountFilter`
+  in `fava/core/filters.py`) over a flat Python list of real directives,
+  entirely separate from BQL/beanquery. But BQL's built-in `journal`
+  command already returns real entry-level rows (date, flag, payee,
+  narration, account, position, balance), not aggregated data - so this
+  is a rendering gap, not an engine gap. Two separate, real
+  improvements (not one big rewrite):
+  1. Recognize when a Query result is entry-shaped (from the `journal`
+     built-in, or any query returning that same real-entry shape) and
+     render it with the same rich Journal/Kontoblatt component (inline
+     editing, document links, type filters, sort) instead of the
+     generic flat table - lets any BQL query, including ones with a
+     richer account filter than the current bar supports, become a
+     fully-featured editable journal view.
+  2. Separately: enrich the Journal's own Account filter for real
+     multi-account include/exclude (closer to Finanzmanager's checkbox
+     list) - doesn't need BQL, independent of #1.
+  Explicitly NOT in scope for Phase 4: aggregated/pivoted Query results
+  (Phases 1-2's work) don't get this treatment - those aren't
+  individual entries, so Kontoblatt-style editing doesn't apply there;
+  that stays on the table/pivot rendering path.
+  User's instruction: implement once Phases 1-3 are done - queued here,
+  not started.
 
 ## Verification checklist (this branch, before it's considered done)
 

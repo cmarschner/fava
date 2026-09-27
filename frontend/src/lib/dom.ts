@@ -53,3 +53,22 @@ export function get_el(target: EventTarget | null): Element | null {
   }
   return null;
 }
+
+/**
+ * Trigger a browser download of client-side-generated text content (e.g.
+ * a CSV export that only exists in the frontend, with no server-side
+ * route to link to).
+ */
+export function download_text(
+  filename: string,
+  contents: string,
+  mime_type = "text/csv;charset=utf-8",
+): void {
+  const blob = new Blob([contents], { type: mime_type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}

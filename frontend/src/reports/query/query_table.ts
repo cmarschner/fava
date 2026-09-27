@@ -77,6 +77,16 @@ export type QueryCell =
   | string[]
   | string;
 
+/** Whether a query cell value should be right-aligned/styled as a number. */
+export function is_numeric_cell(value: QueryCell): boolean {
+  return (
+    typeof value === "number" ||
+    value instanceof Amount ||
+    value instanceof Position ||
+    value instanceof Inventory
+  );
+}
+
 class StringSortedQueryColumn<T> extends StringColumn<QueryCell[]> {
   readonly dtype: QueryColumnType;
   readonly index: number;
