@@ -101,18 +101,111 @@ at three separate points before it would reach the UI.
       assumed to be pixel-perfect).
 - [ ] Live-verified in the browser with a real malformed query.
 
+## Phase 2 - cash-flow lens: account exclusion + account-pool reports
+
+Real need, not hypothetical: the user wants two related but distinct
+ways to get a cleaner view than "every real posting in the ledger" -
+Finanzmanager did this via a report-level account-checkbox list; that
+concept doesn't exist yet for the Query/pivot view.
+
+**2a. Simple account exclusion filter** (general purpose, applies to
+any report): a real account multi-select ("Exclude accounts:")
+alongside the existing Rows/Columns/Values controls. Excluding an
+account just drops every posting-row touching it before pivoting -
+plain BQL `WHERE account NOT IN (...)`-shaped filtering, exposed as a
+UI control instead of hand-written BQL. This alone solves "hide
+Income:Gehalt:RSU so it doesn't skew an income diagram" - RSU vesting
+just disappears from the aggregate, same as removing any other
+account from a Finanzmanager report. Defaults to unset (regression
+discipline unchanged from Phase 1).
+
+**2b. Account-pool ("cash-flow lens") reports** - a harder, separate
+problem: the user wants to look at just their checking accounts and
+see Tilgung (mortgage principal repayment) show up as a real cost line
+- even though structurally it's a transfer to a Liabilities account,
+not an Expenses account - while a transfer between two of the user's
+*own* checking accounts should vanish entirely (not show as income,
+expense, or an unlabeled residual), since no real economic event
+happened.
+
+Real design question the user asked directly: would this need tags on
+every relevant transaction, or is there an easier way? Tags would mean
+tagging every RSU/transfer transaction forever as new ones arrive, and
+still wouldn't get Tilgung to read as a cost without *also* inventing
+a fake tag-to-Expenses remapping. There's a cleaner mechanism that
+needs no per-transaction tagging at all:
+
+Define the report around a user-selected **pool of accounts** (e.g.
+every real checking/Giro account). For every real transaction that
+touches at least one pool account:
+- If *every* posting in that transaction is inside the pool (a
+  transfer between two of the user's own checking accounts) - it's a
+  pure internal reshuffle, net zero by construction. Exclude it
+  entirely; it never appears as income, expense, or residual.
+- If *some* postings are inside the pool and *some* are outside - the
+  outside posting's account becomes that flow's real category,
+  automatically, with no special-casing for whether it happens to be
+  Expenses:, Liabilities:, Income:, or Assets:Depot:. Tilgung
+  (Assets:Bank:Girokonto <-> Liabilities:Kredite:...) is exactly this
+  shape - the Liabilities:Kredite:... leg becomes its natural bucket,
+  a real cash outflow, with zero reclassification hackery.
+
+This single mechanism gets both of the user's real cases for free:
+RSU vesting (Assets:Depot:... <-> Income:Gehalt:RSU) never touches a
+checking-account pool at all, so it's structurally absent from that
+view without needing an exclusion rule; Tilgung automatically reads as
+a real outflow under its own real account name; a genuine transfer
+between two of the user's own pool accounts nets to zero and
+disappears, as it should. Narrowing the pool to a single account
+(rather than "all checking accounts") changes this correctly too - a
+transfer to another of the user's *own but non-pool* accounts would
+then correctly show as a real flow out of that specific account,
+which is the right answer for that narrower question.
+
+Real edge case to handle explicitly, not silently: a transaction
+touching three or more accounts, some inside and some outside the
+pool (e.g. a paycheck split between net pay to Girokonto and separate
+Lohnsteuer/Sozialversicherung withholding legs) - each outside leg
+becomes its own bucketed flow, not collapsed into one combined row.
+
+Implementation:
+- Needs entry-level data (all postings per transaction), not flat
+  per-row aggregates - a row-at-a-time BQL query can't express "every
+  posting in this transaction," so this needs the same foundation
+  already flagged in Phase 6 below (BQL's `journal` built-in, or a
+  dedicated endpoint returning full transactions with every posting).
+- New logic (backend or frontend - whichever keeps this closest to
+  the existing Phase 1 pivot data flow) groups entries by transaction,
+  partitions each transaction's postings into pool/non-pool, excludes
+  transactions with no non-pool posting, otherwise emits one flow row
+  per non-pool posting.
+- New UI control alongside Rows/Columns/Values: a real account
+  multi-select ("Cash-flow pool:"), separate from 2a's exclusion
+  list - defaults to unset/off, same regression discipline as
+  everything else in this plan.
+- Once flows are bucketed by real account, Phase 3 below's
+  hierarchy-stratification applies directly - a Liabilities:Kredite:...
+  flow rolls up into a parent category exactly like any Expenses:...
+  one already does.
+- Live-verified against a real example: pooling the user's real
+  checking accounts should show 2024/2025 Tilgung payments as real
+  outflows, and RSU vesting should be completely absent - not zero,
+  not miscategorized, structurally never appears.
+
 ## Queued next phases (explicitly out of scope for now)
 
 Not building ahead of what's asked - the user said "we will do a major
-UI update later once this works." Noted here so the plan stays
-discoverable across sessions.
+UI update later once this works," though Phase 2 above is now being
+executed per a direct follow-up request. Phases below stay queued
+until asked for. Noted here so the plan stays discoverable across
+sessions.
 
-- **Phase 2 - hierarchy-aware pivot rows**: use `stratify_accounts()`
+- **Phase 3 - hierarchy-aware pivot rows**: use `stratify_accounts()`
   from `frontend/src/lib/tree.ts` (already powers the Treemap/Sunburst/
   Icicle charts) to turn a flat account-name row dimension into an
   indented category tree with subtotals per level, matching Lexware's
   own row hierarchy instead of one flat row per leaf account.
-- **Phase 3 - drill-through links and period-over-period deltas**:
+- **Phase 4 - drill-through links and period-over-period deltas**:
   1. **Drill-through links**: not just individual cells - three
      related but distinct link targets, each filtered to only what it
      actually represents:
@@ -152,11 +245,11 @@ discoverable across sessions.
      % delta are conceptually separate toggles (user said "absolute
      and/or %") - support enabling either or both independently rather
      than one combined mode.
-- **Phase 4 - starter query snippets**: a small set of ready-made BQL
+- **Phase 5 - starter query snippets**: a small set of ready-made BQL
   queries (e.g. monthly expenses by category, year-over-year income)
-  that open directly into the Phase 1-3 pivot view, so the user doesn't
+  that open directly into the Phase 1-4 pivot view, so the user doesn't
   need to hand-write BQL for the reports they used most in Finanzmanager.
-- **Phase 5 - unify the Journal and Query views**: real architectural
+- **Phase 6 - unify the Journal and Query views**: real architectural
   finding (verified, not re-derived): the Journal/Kontoblatt view and
   the Query view are two genuinely separate systems today - Journal uses
   a hand-built filter-DSL (`TimeFilter`/`AdvancedFilter`/`AccountFilter`
@@ -176,11 +269,11 @@ discoverable across sessions.
   2. Separately: enrich the Journal's own Account filter for real
      multi-account include/exclude (closer to Finanzmanager's checkbox
      list) - doesn't need BQL, independent of #1.
-  Explicitly NOT in scope for Phase 5: aggregated/pivoted Query results
-  (Phases 1-3's work) don't get this treatment - those aren't
+  Explicitly NOT in scope for Phase 6: aggregated/pivoted Query results
+  (Phases 1-4's work) don't get this treatment - those aren't
   individual entries, so Kontoblatt-style editing doesn't apply there;
   that stays on the table/pivot rendering path.
-  User's instruction: implement once Phases 1-4 are done - queued here,
+  User's instruction: implement once Phases 1-5 are done - queued here,
   not started.
 
 ## Verification checklist (this branch, before it's considered done)
