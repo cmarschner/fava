@@ -36,9 +36,9 @@ const query_column_type = constants(
 );
 
 /** The query result data columns can have one of these various types. */
-type QueryColumnType = ValidationT<typeof query_column_type>;
+export type QueryColumnType = ValidationT<typeof query_column_type>;
 
-interface QueryType {
+export interface QueryType {
   dtype: QueryColumnType;
   name: string;
 }
@@ -123,7 +123,17 @@ class NumberSortedQueryColumn<T> extends NumberColumn<QueryCell[]> {
   }
 }
 
-function get_query_column(type: QueryType, index: number) {
+/**
+ * Build a real, sortable query column object for the given dtype/name
+ * at the given row index - exported so code that synthesizes its own
+ * `QueryResultTable` (Phase 2b's cash-flow pool report builds one from
+ * `journal`-shaped entries, not from a fresh server response) can
+ * produce real column objects instead of a plain `{name, dtype}` pair,
+ * which is a different, incompatible shape (`QueryColumn` carries a
+ * validator and a sort function, not just the two raw fields).
+ */
+// eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types -- the real return type is a union of two generic classes plus a literal string (see the switch below); annotating it explicitly risks a subtly wrong variance bound rather than just letting inference (already exhaustively checked by the switch) stand, same as before this function was exported.
+export function get_query_column(type: QueryType, index: number) {
   switch (type.dtype) {
     case "bool":
       return new StringSortedQueryColumn(type, index, boolean, (v) =>

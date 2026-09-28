@@ -9,6 +9,7 @@
   import { filter_params } from "../../stores/filters.ts";
   import { query_shell_history } from "../../stores/query.ts";
   import { search_params } from "../../stores/url.ts";
+  import CashFlowPool from "./CashFlowPool.svelte";
   import type { QueryError } from "./errors.ts";
   import type { QueryReportProps } from "./index.ts";
   import QueryBox from "./QueryBox.svelte";
@@ -114,6 +115,7 @@
 </script>
 
 <QueryEditor bind:value={query_string} {submit} {codemirror_bql} />
+<CashFlowPool />
 {#each $query_shell_history as query (query)}
   <QueryBox
     {query}
