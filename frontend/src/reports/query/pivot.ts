@@ -1,6 +1,7 @@
 import { sum } from "d3-array";
 
 import { Amount } from "../../entries/index.ts";
+import { is_descendant_or_equal } from "../../lib/account.ts";
 import { Position } from "../../entries/position.ts";
 import { Inventory, type QueryCell, type QueryResultTable } from "./query_table.ts";
 
@@ -237,6 +238,55 @@ export function pivot_to_csv(pivot: PivotResult): string {
     .map(csv_field)
     .join(",");
   return [header, ...lines, total_line].join("\r\n");
+}
+
+/**
+ * The name of the "account" column in a query result table, if it has
+ * one - used both to offer the account-exclusion control (Phase 2a) and
+ * to detect journal-shaped results for the cash-flow pool (Phase 2b).
+ * Matches on column name (not just dtype "str"/"object") since a query
+ * can have several string columns (e.g. `narration`) - only a column
+ * actually named "account" is safe to treat as real account data.
+ */
+export function account_column_name(table: QueryResultTable): string | null {
+  const has_account = table.columns.some((c) => c.name === "account");
+  return has_account ? "account" : null;
+}
+
+/**
+ * Filter out every row whose account column value is equal to, or a
+ * descendant of, one of the excluded accounts (Phase 2a). Excluding a
+ * parent account (e.g. "Income:Gehalt") excludes its whole subtree
+ * (e.g. "Income:Gehalt:RSU" too) - matches how the rest of Fava treats
+ * an account name as a real hierarchy prefix, not just one literal
+ * string. Returns `table` unchanged (same object) if there's no account
+ * column or nothing is excluded, so this is a safe no-op when the
+ * control is unused.
+ */
+export function filter_table_excluding_accounts(
+  table: QueryResultTable,
+  excluded: ReadonlySet<string>,
+): QueryResultTable {
+  if (excluded.size === 0) {
+    return table;
+  }
+  const account_col = account_column_name(table);
+  if (account_col == null) {
+    return table;
+  }
+  const account_index = table.columns.findIndex(
+    (c) => c.name === account_col,
+  );
+  const predicates = [...excluded].map(is_descendant_or_equal);
+  const rows = table.rows.filter((row) => {
+    const value = row[account_index];
+    return !(
+      typeof value === "string" && predicates.some((p) => p(value))
+    );
+  });
+  return rows.length === table.rows.length
+    ? table
+    : { ...table, rows };
 }
 
 /**

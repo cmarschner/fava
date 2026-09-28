@@ -10,8 +10,16 @@
   import { download_text } from "../../lib/dom.ts";
   import { _ } from "../../i18n.ts";
   import type { Result } from "../../lib/result.ts";
+  import AccountMultiSelect from "./AccountMultiSelect.svelte";
   import type { QueryError } from "./errors.ts";
-  import { PIVOT_AGGREGATIONS, pivot_table, pivot_to_csv, table_is_pivotable } from "./pivot.ts";
+  import {
+    account_column_name,
+    filter_table_excluding_accounts,
+    PIVOT_AGGREGATIONS,
+    pivot_table,
+    pivot_to_csv,
+    table_is_pivotable,
+  } from "./pivot.ts";
   import type { PivotAggregation } from "./pivot.ts";
   import PivotTable from "./PivotTable.svelte";
   import QueryLinks from "./QueryLinks.svelte";
@@ -58,14 +66,32 @@
   let pivot_value_col = $state("");
   let pivot_agg = $state<PivotAggregation>("sum");
 
-  let is_pivotable = $derived(table != null && table_is_pivotable(table));
+  /** Phase 2a - accounts excluded from this result entirely, before any
+   * pivoting or flat rendering. Empty by default - same "must regress
+   * to today's behavior when unused" discipline as the pivot controls. */
+  let excluded_accounts: string[] = $state([]);
+  let has_account_column = $derived(
+    table != null && account_column_name(table) != null,
+  );
+  /** `table` with `excluded_accounts` applied - same object as `table`
+   * (not a copy) whenever nothing is actually excluded, so every
+   * downstream branch is provably unchanged in that case. */
+  let filtered_table = $derived(
+    table != null
+      ? filter_table_excluding_accounts(table, new Set(excluded_accounts))
+      : undefined,
+  );
+
+  let is_pivotable = $derived(
+    filtered_table != null && table_is_pivotable(filtered_table),
+  );
   let pivot_active = $derived(
     pivot_row_col !== "" && pivot_col_col !== "" && pivot_value_col !== "",
   );
   let pivot_result = $derived(
-    table != null && pivot_active
+    filtered_table != null && pivot_active
       ? pivot_table(
-          table,
+          filtered_table,
           pivot_row_col,
           pivot_col_col,
           pivot_value_col,
@@ -108,14 +134,22 @@
       {#if result.is_ok}
         {#if result.value.t === "string"}
           <pre><code>{result.value.contents}</code></pre>
-        {:else if table}
+        {:else if table && filtered_table}
+          {#if has_account_column}
+            <div class="pivot-controls">
+              <label>
+                {_("Exclude accounts")}
+                <AccountMultiSelect bind:selected={excluded_accounts} />
+              </label>
+            </div>
+          {/if}
           {#if is_pivotable}
             <div class="pivot-controls">
               <label>
                 {_("Rows")}
                 <select bind:value={pivot_row_col}>
                   <option value="">—</option>
-                  {#each table.columns as column (column.name)}
+                  {#each filtered_table.columns as column (column.name)}
                     <option value={column.name}>{column.name}</option>
                   {/each}
                 </select>
@@ -124,7 +158,7 @@
                 {_("Columns")}
                 <select bind:value={pivot_col_col}>
                   <option value="">—</option>
-                  {#each table.columns as column (column.name)}
+                  {#each filtered_table.columns as column (column.name)}
                     <option value={column.name}>{column.name}</option>
                   {/each}
                 </select>
@@ -133,7 +167,7 @@
                 {_("Values")}
                 <select bind:value={pivot_value_col}>
                   <option value="">—</option>
-                  {#each table.columns as column (column.name)}
+                  {#each filtered_table.columns as column (column.name)}
                     <option value={column.name}>{column.name}</option>
                   {/each}
                 </select>
@@ -156,11 +190,11 @@
           {#if pivot_result}
             <PivotTable pivot={pivot_result} />
           {:else}
-            {@const chart = get_query_chart(result.value, $chart_context)}
+            {@const chart = get_query_chart(filtered_table, $chart_context)}
             {#if chart}
               <Chart {chart} />
             {/if}
-            <QueryTable table={result.value} />
+            <QueryTable table={filtered_table} />
           {/if}
         {/if}
       {:else}
